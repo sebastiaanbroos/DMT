@@ -4,7 +4,7 @@ import numpy as np
 # --------------------------
 # Step 1: Load the Data
 # --------------------------
-data = pd.read_csv(".//data/dataset_mood_smartphone.csv", parse_dates=["time"])
+data = pd.read_csv("/Users/s.broos/Documents/DMT/data/dataset_mood_smartphone.csv", parse_dates=["time"])
 
 # Convert the 'value' column to numeric (if applicable)
 data['value_numeric'] = pd.to_numeric(data['value'], errors='coerce')
@@ -85,13 +85,13 @@ def detect_extreme_iqr(df, variable, expected_range):
         valid = valid[(valid['value_numeric'] >= lower_valid) & (valid['value_numeric'] <= upper_valid)]
     
     # Calculate the first (Q1) and third (Q3) quartiles on valid values only
-    Q1 = valid['value_numeric'].quantile(0.25)
-    Q3 = valid['value_numeric'].quantile(0.75)
+    Q1 = valid['value_numeric'].quantile(0.01)
+    Q3 = valid['value_numeric'].quantile(0.99)
     IQR = Q3 - Q1
 
     # Define the lower and upper bounds for extreme values
-    lower_bound = Q1 - 1.5 * IQR
-    upper_bound = Q3 + 1.5 * IQR
+    lower_bound = Q1 - 1 * IQR
+    upper_bound = Q3 + 1 * IQR
 
     # Identify extreme values from the valid subset
     extremes = valid[(valid['value_numeric'] < lower_bound) | (valid['value_numeric'] > upper_bound)]
