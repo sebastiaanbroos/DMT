@@ -35,7 +35,7 @@ expected_domains = {
 # - np.sum for durations (where the upper bound is np.inf)
 # - np.max for binary variables (call, sms)
 # - np.mean for the remaining (like mood, circumplex, activity)
-binary_vars = ["call", "sms"]
+binary_vars = ["call", "sms", "activity"]
 agg_funcs = {}
 for var, domain in expected_domains.items():
     if var in binary_vars:
