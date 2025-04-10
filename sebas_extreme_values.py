@@ -4,7 +4,7 @@ import numpy as np
 # --------------------------
 # Step 1: Load the Data
 # --------------------------
-data = pd.read_csv("/Users/s.broos/Documents/DMT/data/dataset_mood_smartphone.csv", parse_dates=["time"])
+data = pd.read_csv("data/dataset_mood_smartphone.csv", parse_dates=["time"])
 
 # Convert the 'value' column to numeric (if applicable)
 data['value_numeric'] = pd.to_numeric(data['value'], errors='coerce')
