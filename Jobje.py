@@ -84,3 +84,98 @@ plt.figtext(0.5, 0.01,
 plt.tight_layout(rect=[0, 0.03, 1, 0.97])
 
 plt.show()
+
+
+plt.figure(figsize=(12, 2.5))
+
+# Only use screen values
+screen_data = data[data['variable'] == 'screen']['value']
+
+sns.stripplot(x=screen_data, color='#4292C6', size=4, jitter=True)
+
+plt.title("All Screen Durations (Individual Data Points)", fontweight='bold', pad=10)
+plt.xlabel("Screen Duration (seconds)", fontweight='bold')
+plt.yticks([])  # No need for y-axis here
+
+# Add mean line
+mean_val = screen_data.mean()
+plt.axvline(mean_val, color='#E41A1C', linestyle='--', linewidth=1.5,
+            label=f'Mean: {mean_val:.2f}')
+
+# Legend
+plt.legend(loc='upper right')
+plt.tight_layout()
+plt.show()
+
+
+# Step 1: Filter to only 'call' entries
+call_data = data[data['variable'] == 'call'].copy()
+
+# Step 2: Convert time to datetime and extract the date
+call_data['date'] = pd.to_datetime(call_data['time']).dt.date
+
+# Step 3: Group by user and date, and count
+call_counts = call_data.groupby(['id', 'date']).size().reset_index(name='call_count')
+
+# Step 4: Filter to only those with 2 or more calls
+multiple_calls = call_counts[call_counts['call_count'] >= 2]
+
+# Show the result
+print(multiple_calls)
+
+
+# Step 1: Filter to only 'sms' entries
+sms_data = data[data['variable'] == 'sms'].copy()
+
+# Step 2: Convert time to datetime and extract the date
+sms_data['date'] = pd.to_datetime(sms_data['time']).dt.date
+
+# Step 3: Group by user and date, and count
+sms_counts = sms_data.groupby(['id', 'date']).size().reset_index(name='sms_count')
+
+# Step 4: Filter to only those with 2 or more SMS events on the same day
+multiple_sms = sms_counts[sms_counts['sms_count'] >= 2]
+
+# Show the result
+print(multiple_sms)
+max_sms_count = sms_counts['sms_count'].max()
+print(f"Highest number of SMS events by a user on a single day: {max_sms_count}")
+
+
+app_categories = [
+    "screen", "appCat.builtin", "appCat.communication", "appCat.entertainment",
+    "appCat.office", "appCat.social", "appCat.travel",
+    "appCat.unknown", "appCat.utilities", "appCat.weather"
+]
+
+plt.style.use('seaborn-v0_8-whitegrid')
+plt.rcParams.update({
+    'font.size': 10,
+    'axes.labelsize': 12,
+    'axes.titlesize': 13,
+    'xtick.labelsize': 10,
+    'ytick.labelsize': 10
+})
+
+for category in app_categories:
+    cat_data = data[data["variable"] == category].copy()
+
+    plt.figure(figsize=(10, 4))
+    ax = sns.scatterplot(
+        x="time", y="value", data=cat_data,
+        alpha=0.5, color="#3182bd", s=12
+    )
+
+    q1 = cat_data["value"].quantile(0.25)
+    q3 = cat_data["value"].quantile(0.75)
+    iqr = q3 - q1
+    threshold = q3 + 1.5 * iqr
+
+    plt.axhline(threshold, color="red", linestyle="--", linewidth=1.5, label=f"Threshold ≈ {threshold:.0f}")
+    plt.title(f"App Usage: {category}", fontweight='bold')
+    plt.xlabel("Time")
+    plt.ylabel("Usage (seconds)")
+    plt.legend(loc="upper right", fontsize=9)
+    plt.grid(True, linestyle='--', alpha=0.5)
+    plt.tight_layout()
+    plt.show()
