@@ -40,7 +40,7 @@ def temporal_impute(df, target, method='time'):
 # appCat.game, appCat.office, appCat.other, appCat.social, appCat.travel,
 # appCat.unknown, appCat.utilities, appCat.weather, call, screen, sms
 
-data_path = "/Users/s.broos/Documents/DMT/data/daily_aggregated_completemoods.csv"
+data_path = "/Users/s.broos/Documents/DMT/data/daily_removed_incomplete_moods_non-imputated.csv"
 df_daily = pd.read_csv(data_path, parse_dates=["date"])
 print("Loaded daily aggregated data with shape:", df_daily.shape)
 df_daily = df_daily.sort_values("date").reset_index(drop=True)

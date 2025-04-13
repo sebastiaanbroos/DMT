@@ -12,7 +12,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error
 # =============================================================================
 
 # Load the CSV file (assumes columns: id, date, plus candidate variables)
-data_path = "/Users/s.broos/Documents/DMT/data/daily_aggregated_completemoods.csv"
+data_path = "/Users/s.broos/Documents/DMT/data/daily_removed_incomplete_moods_non-imputated.csv"
 df = pd.read_csv(data_path, parse_dates=["date"])
 df = df.sort_values("date").reset_index(drop=True)
 

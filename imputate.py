@@ -145,7 +145,7 @@ best_method_mapping = {
 # -----------------------------------------------------------------------------
 # 1. LOAD & PREPROCESS THE DATA
 # -----------------------------------------------------------------------------
-data_path = "/Users/s.broos/Documents/DMT/data/daily_aggregated_completemoods.csv"
+data_path = "/Users/s.broos/Documents/DMT/data/daily_removed_incomplete_moods_non-imputated.csv"
 df = pd.read_csv(data_path, parse_dates=["date"])
 df = df.sort_values("date").reset_index(drop=True)
 
@@ -235,7 +235,7 @@ for col in impute_cols:
     df[col] = df_data[col]
 
 # Save the fully imputed DataFrame and the imputation record.
-output_csv = "daily_aggregated_completemoods_imputed.csv"
+output_csv = "//data/daily_removed_incomplete_moods_imputated.csv"
 df.to_csv(output_csv, index=False)
 record_csv = "imputation_record.csv"
 imputation_record.to_csv(record_csv, index=False)

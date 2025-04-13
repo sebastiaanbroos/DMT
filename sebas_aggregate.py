@@ -110,6 +110,6 @@ print(f"Number of rows dropped due to missing 'mood_avg': {dropped_rows}")
 # --------------------------
 # Save the Daily Aggregated Data to CSV
 # --------------------------
-output_csv = "/Users/s.broos/Documents/DMT/data/daily_aggregated_completemoods.csv"
+output_csv = "/Users/s.broos/Documents/DMT/data/daily_removed_incomplete_moods_non-imputated.csv"
 df_daily.to_csv(output_csv, index=False)
 print(f"Saved daily aggregated data to {output_csv}")
