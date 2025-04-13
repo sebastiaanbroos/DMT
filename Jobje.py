@@ -223,4 +223,82 @@ for category in app_categories:
     plt.show()
 
 
-    
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Laad de data
+data = pd.read_csv("data/daily_aggregated_imputed_new.csv", parse_dates=["date"])
+
+# App-categorieën (alle kolommen van interesse)
+app_categories = [
+    "screen", "appCat.builtin", "appCat.communication", "appCat.entertainment",
+    "appCat.office", "appCat.social", "appCat.travel",
+    "appCat.unknown", "appCat.utilities", "appCat.weather"
+]
+
+# Algemene stijlinstellingen
+plt.style.use('seaborn-v0_8-whitegrid')
+plt.rcParams.update({
+    'font.size': 10,
+    'axes.labelsize': 12,
+    'axes.titlesize': 13,
+    'xtick.labelsize': 10,
+    'ytick.labelsize': 10
+})
+
+# Scatterplots per categorie met IQR-threshold
+for category in app_categories:
+    cat_data = data[[category, "date"]].dropna()
+    cat_data = cat_data[cat_data[category] >= 0]
+
+    if cat_data.empty:
+        continue
+
+    # IQR-berekening
+    q1 = cat_data[category].quantile(0.25)
+    q3 = cat_data[category].quantile(0.75)
+    iqr = q3 - q1
+    threshold = q3 + 1.5 * iqr
+
+    plt.figure(figsize=(10, 4))
+    sns.scatterplot(
+        x="date", y=category, data=cat_data,
+        alpha=0.5, color="#3182bd", s=12
+    )
+    plt.axhline(threshold, color="red", linestyle="--", linewidth=1.5, label=f"Threshold ≈ {threshold:.0f}")
+    plt.title(f"App Usage Over Time: {category}", fontweight='bold')
+    plt.xlabel("Date")
+    plt.ylabel("Usage (seconds)")
+    plt.legend(loc="upper right", fontsize=9)
+    plt.grid(True, linestyle='--', alpha=0.5)
+    plt.tight_layout()
+    plt.show()
+
+# Histogrammen per categorie met threshold
+for category in app_categories:
+    cat_data = data[[category]].dropna()
+    cat_data = cat_data[
+        (cat_data[category] >= 0) &
+        (cat_data[category] <= 1000000)
+    ]
+
+    if cat_data.empty:
+        continue
+
+    # Threshold berekening
+    q1 = cat_data[category].quantile(0.25)
+    q3 = cat_data[category].quantile(0.75)
+    iqr = q3 - q1
+    threshold = q3 + 1.5 * iqr
+
+    plt.figure(figsize=(10, 4))
+    sns.histplot(cat_data[category], bins=40, color="#6baed6", edgecolor='black', alpha=0.8)
+    plt.axvline(threshold, color="red", linestyle="--", linewidth=1.5, label=f"Threshold ≈ {threshold:.0f}")
+    plt.title(f"App Usage Distribution: {category}", fontweight='bold')
+    plt.xlabel("Usage (seconds)")
+    plt.ylabel("Frequency")
+    plt.legend(loc="upper right", fontsize=9)
+    plt.grid(axis="y", linestyle='--', alpha=0.5)
+    plt.tight_layout()
+    plt.show()
