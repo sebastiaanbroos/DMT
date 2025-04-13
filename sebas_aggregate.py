@@ -2,48 +2,29 @@ import pandas as pd
 import numpy as np
 
 # --------------------------
-# Expected Domains: Define allowed ranges for each variable.
+# Updated Expected Domains: Define allowed ranges for each variable.
 # --------------------------
 expected_domains = {
     "mood": (1, 10),
     "circumplex.arousal": (-2, 2),
     "circumplex.valence": (-2, 2),
     "activity": (0, 1),
-    # For 'screen' and all appCat variables,
-    # we assume that duration should be non-negative.
-    "screen": (0, np.inf),
-    "call": (0, 1),    # binary: exactly 0 or 1.
-    "sms": (0, 1),     # binary: exactly 0 or 1.
-    "appCat.builtin": (0, np.inf),
-    "appCat.communication": (0, np.inf),
-    "appCat.entertainment": (0, np.inf),
-    "appCat.finance": (0, np.inf),
-    "appCat.game": (0, np.inf),
-    "appCat.office": (0, np.inf),
-    "appCat.other": (0, np.inf),
-    "appCat.social": (0, np.inf),
-    "appCat.travel": (0, np.inf),
-    "appCat.unknown": (0, np.inf),
-    "appCat.utilities": (0, np.inf),
-    "appCat.weather": (0, np.inf)
+    "screen": (0, 24000),            # updated max value
+    "call": (0, 1),                  # binary
+    "sms": (0, 1),                   # binary
+    "appCat.builtin": (0, 7500),       # updated max value
+    "appCat.communication": (0, 11000),# updated max value
+    "appCat.entertainment": (0, 9000), # updated max value
+    "appCat.finance": (0, 600),     # no max provided, remain unchanged
+    "appCat.game": (0, 4000),        # unchanged
+    "appCat.office": (0, 3000),        # updated max value
+    "appCat.other": (0, 1250),       # unchanged
+    "appCat.social": (0, 10000),       # updated max value
+    "appCat.travel": (0, 2100),        # updated max value
+    "appCat.unknown": (0, 600),        # updated max value
+    "appCat.utilities": (0, 750),      # updated max value
+    "appCat.weather": (0, 500)         # updated max value
 }
-
-# --------------------------
-# Define Aggregation Functions for Each Variable
-# --------------------------
-# We want to use:
-# - np.sum for durations (where the upper bound is np.inf)
-# - np.max for binary variables (call, sms)
-# - np.mean for the remaining (like mood, circumplex, activity)
-binary_vars = ["call", "sms", "activity"]
-agg_funcs = {}
-for var, domain in expected_domains.items():
-    if var in binary_vars:
-        agg_funcs[var] = np.max      # if any record is 1, then the daily value is 1.
-    elif domain[1] == np.inf:
-        agg_funcs[var] = np.sum      # sum durations.
-    else:
-        agg_funcs[var] = np.mean     # otherwise, average the values.
 
 # --------------------------
 # Load the Data
@@ -59,20 +40,22 @@ data['value_numeric'] = pd.to_numeric(data['value'], errors='coerce')
 data = data.dropna(subset=['value_numeric'])
 
 # --------------------------
-# Remove Records Falling Outside the Expected Domain
+# Cap Values Above Maximum Rather than Dropping Them
 # --------------------------
-def within_domain(row):
+def cap_value(row):
     var = row['variable']
+    # Only modify values if the variable is defined in expected_domains.
     if var not in expected_domains:
-        return True  # keep if the variable is not defined in expected_domains.
+        return row['value_numeric']
     lo, hi = expected_domains[var]
-    # For domains with hi == np.inf, only check the lower bound.
-    if hi == np.inf:
-        return row['value_numeric'] >= lo
+    # Replace high values with the maximum allowed.
+    if hi != np.inf and row['value_numeric'] > hi:
+        return hi
     else:
-        return lo <= row['value_numeric'] <= hi
+        return row['value_numeric']
 
-data = data[data.apply(within_domain, axis=1)].copy()
+# Apply the cap_value function to update the value_numeric column.
+data['value_numeric'] = data.apply(cap_value, axis=1)
 
 # --------------------------
 # Add a 'date' Column for Daily Grouping
@@ -80,41 +63,53 @@ data = data[data.apply(within_domain, axis=1)].copy()
 data['date'] = data['time'].dt.date
 
 # --------------------------
-# Aggregate the Data by (id, date, variable)
+# Define Variables for Special Aggregation and the Normal ones
 # --------------------------
-# For each group (subject, day, variable) apply the appropriate function from agg_funcs.
-def aggregate_daily(group):
-    var = group['variable'].iloc[0]
-    func = agg_funcs.get(var, np.mean)
-    # Aggregate the 'value_numeric' column.
-    return func(group['value_numeric'])
-
-daily_agg = data.groupby(['id', 'date', 'variable'], group_keys=False)\
-                .apply(aggregate_daily)\
-                .reset_index(name='daily_value')
-
-print("Daily aggregation (pre-pivot) shape:", daily_agg.shape)
-print(daily_agg.head(10))
+special_vars = ['mood', 'circumplex.arousal', 'circumplex.valence']
 
 # --------------------------
-# Pivot the Aggregated Data: one row per subject and date
+# Special Aggregation: For mood, arousal, and valence calculate the mean and standard deviation
 # --------------------------
-df_daily = daily_agg.pivot_table(index=['id', 'date'], columns='variable', values='daily_value')
-df_daily = df_daily.reset_index()
+special_data = data[data['variable'].isin(special_vars)]
+special_agg = special_data.groupby(['id', 'date', 'variable'])['value_numeric'].agg(['mean', 'std']).reset_index()
 
-print("Pivoted daily data shape:", df_daily.shape)
-print("Missing values per variable in daily data:")
-print(df_daily.isnull().sum())
+# Pivot so that each variable produces two columns: one for average and one for standard deviation.
+special_avg = special_agg.pivot_table(index=['id', 'date'], columns='variable', values='mean')
+special_avg.columns = [f"{col}_avg" for col in special_avg.columns]
+
+special_std = special_agg.pivot_table(index=['id', 'date'], columns='variable', values='std')
+special_std.columns = [f"{col}_std" for col in special_std.columns]
+
+# Merge average and standard deviation results for the special variables.
+special_pivot = special_avg.join(special_std, how='outer').reset_index()
 
 # --------------------------
-# Remove Rows where 'mood' is not Present
+# Normal Aggregation: For all other variables, sum the values.
 # --------------------------
-df_daily = df_daily.dropna(subset=['mood'])
-print("Pivoted daily data shape after dropping rows without mood:", df_daily.shape)
+normal_data = data[~data['variable'].isin(special_vars)]
+normal_agg = normal_data.groupby(['id', 'date', 'variable'])['value_numeric'].sum().reset_index()
+
+# Pivot the normal aggregated values: one row per id and date.
+normal_pivot = normal_agg.pivot(index=['id', 'date'], columns='variable', values='value_numeric').reset_index()
+
+# --------------------------
+# Combine the Special and Normal Aggregations
+# --------------------------
+df_daily = pd.merge(special_pivot, normal_pivot, on=['id', 'date'], how='outer')
+
+# --------------------------
+# Remove Rows where 'mood' is not Present.
+# Note: Since 'mood' has been aggregated to 'mood_avg', we drop rows where that is missing.
+# --------------------------
+before_drop = df_daily.shape[0]
+df_daily = df_daily.dropna(subset=['mood_avg'])
+after_drop = df_daily.shape[0]
+dropped_rows = before_drop - after_drop
+print(f"Number of rows dropped due to missing 'mood_avg': {dropped_rows}")
 
 # --------------------------
 # Save the Daily Aggregated Data to CSV
 # --------------------------
-output_csv = "/Users/s.broos/Documents/DMT/data/daily_aggregated_imputed.csv"
+output_csv = "/Users/s.broos/Documents/DMT/data/daily_aggregated_completemoods.csv"
 df_daily.to_csv(output_csv, index=False)
 print(f"Saved daily aggregated data to {output_csv}")

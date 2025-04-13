@@ -1,319 +1,204 @@
 import pandas as pd
 import numpy as np
-from sklearn.linear_model import LinearRegression, Lasso
 from sklearn.metrics import mean_absolute_error, mean_squared_error
-from joblib import Parallel, delayed
+from sklearn.neighbors import KNeighborsRegressor
+from sklearn.ensemble import RandomForestRegressor
 
-# --------------------------
-# 1. CUSTOM KNN PREDICTION
-# --------------------------
-def custom_knn_predict(missing_row, X_train, y_train, predictors, k=5):
+# -----------------------------------------------------------------------------
+# Helper: Temporal Imputation Function
+# -----------------------------------------------------------------------------
+def temporal_impute(df, target, method='time'):
     """
-    For 'missing_row' (Series), use only the predictor columns that are non-missing
-    in that row. Then filter X_train to rows that also have no missing in those columns,
-    compute Euclidean distances, and return the mean target of the k nearest neighbors.
+    Performs temporal imputation for each subject (grouped by 'id') in df.
+    For each group, the function sorts by 'date', and if there are at least 2
+    nonmissing values in target, it sets the index to the date and applies time 
+    interpolation. Otherwise, it falls back on forward/backward fill.
+    
+    Returns a Series with imputed values (aligned with df.index).
     """
-    # 1) Which predictors are non-NaN in the missing row?
-    available_predictors = missing_row[predictors].dropna().index.tolist()
-    if not available_predictors:
-        return np.nan
-    
-    # 2) Filter train set to rows that also have no NaN in those columns
-    X_train_sub = X_train[available_predictors].dropna()
-    y_train_sub = y_train.loc[X_train_sub.index]
-    if X_train_sub.empty:
-        return np.nan
-    
-    # 3) One row of data to compare
-    x_missing = missing_row[available_predictors]  # Series of floats
-    
-    # 4) Euclidean distances
-    #    - diffs: DataFrame where each row is (X_train_sub_row - x_missing)
-    diffs = X_train_sub - x_missing
-    #    - sum of squared diffs across columns => then sqrt
-    distances = np.sqrt((diffs**2).sum(axis=1))  # Must be numeric -> fix by ensuring numeric
-    if distances.empty:
-        return np.nan
-    
-    # 5) Get mean of k nearest neighbors
-    k = min(k, len(distances))
-    nearest_indices = distances.nsmallest(k).index
-    return y_train_sub.loc[nearest_indices].mean()
+    result = pd.Series(index=df.index, dtype=float)
+    for sid, group in df.groupby('id'):
+        group_sorted = group.sort_values('date')
+        if group_sorted[target].notna().sum() < 2:
+            imputed = group_sorted[target].ffill().bfill()
+        else:
+            # For time interpolation, use the 'date' column as the index.
+            ser = pd.Series(data=group_sorted[target].values, index=group_sorted['date'])
+            imputed = ser.interpolate(method='time').ffill().bfill()
+            # Align the imputed values with the original DataFrame index.
+            imputed = pd.Series(imputed.values, index=group_sorted.index)
+        result.loc[group_sorted.index] = imputed.values
+    return result
 
+# =============================================================================
+# 1. LOAD THE DAILY AGGREGATED DATA
+# =============================================================================
+# The data file should include the following columns:
+# id, date, circumplex.arousal_avg, circumplex.valence_avg, mood_avg,
+# circumplex.arousal_std, circumplex.valence_std, mood_std, activity,
+# appCat.builtin, appCat.communication, appCat.entertainment, appCat.finance,
+# appCat.game, appCat.office, appCat.other, appCat.social, appCat.travel,
+# appCat.unknown, appCat.utilities, appCat.weather, call, screen, sms
 
-# --------------------------
-# 2. PARALLEL KNN EVALUATION
-# --------------------------
-def evaluate_knn_for_k(k, df_train, df_test, predictors, target):
-    """
-    For a given k, fill the target in df_test using custom_knn_predict. 
-    Return a tuple (method_name, metrics_dict).
-    """
-    X_train = df_train[predictors]
-    y_train = df_train[target + '_true']
-    
-    # Debug check: confirm we are numeric
-    # (Uncomment if you need to confirm everything is float)
-    # print(f"[DEBUG] KNN for k={k} => X_train dtypes:\n", X_train.dtypes)
-    
-    knn_preds = {}
-    for idx, row in df_test.iterrows():
-        pred = custom_knn_predict(row, X_train, y_train, predictors, k=k)
-        knn_preds[idx] = pred
-    
-    # Evaluate
-    true_vals = df_test[target + '_true']
-    pred_vals = pd.Series(knn_preds)
-    mask = (~true_vals.isna()) & (~pred_vals.isna())
-    
-    if not mask.any():
-        knn_mae = np.nan
-        knn_rmse = np.nan
-    else:
-        knn_mae = mean_absolute_error(true_vals[mask], pred_vals[mask])
-        knn_rmse = np.sqrt(mean_squared_error(true_vals[mask], pred_vals[mask]))
-    
-    return (f"knn_k_{k}", {"MAE": knn_mae, "RMSE": knn_rmse})
-
-
-# --------------------------
-# 3. GLOBAL PARAMS
-# --------------------------
-spline_orders = [2, 3, 4]
-lasso_alphas = [0.1, 1, 10]
-knn_k_values = [3, 5, 7]
-
-expected_variables = [
-    'mood', 'circumplex.arousal', 'circumplex.valence', 'activity', 
-    'screen', 'call', 'sms', 'appCat.builtin', 'appCat.communication',
-    'appCat.entertainment', 'appCat.finance', 'appCat.game', 
-    'appCat.office', 'appCat.other', 'appCat.social', 'appCat.travel',
-    'appCat.unknown', 'appCat.utilities', 'appCat.weather'
-]
-
-
-# --------------------------
-# 4. LOAD + FILTER DATA
-# --------------------------
-data_path = "/Users/s.broos/Documents/DMT/data/daily_aggregated_imputed.csv"
+data_path = "/Users/s.broos/Documents/DMT/data/daily_aggregated_completemoods.csv"
 df_daily = pd.read_csv(data_path, parse_dates=["date"])
-print("Initial shape:", df_daily.shape)
+print("Loaded daily aggregated data with shape:", df_daily.shape)
+df_daily = df_daily.sort_values("date").reset_index(drop=True)
 
-# Filter out rows missing too many variables
-max_missing = 50
-expected_cols = [c for c in expected_variables if c in df_daily.columns]
-thresh = len(expected_cols) - max_missing
-df_daily = df_daily.dropna(subset=expected_cols, thresh=thresh)
-print("Shape after dropping rows with > 5 missing among expected cols:", df_daily.shape)
+# Candidate variables: all columns except "id" and "date"
+impute_cols = [col for col in df_daily.columns if col not in ["id", "date"]]
 
-# Sort by date, do time-based split
-df_daily = df_daily.sort_values('date').reset_index(drop=True)
-split_idx = int(0.8 * len(df_daily))
-df_train_full = df_daily.iloc[:split_idx].copy()
-df_test_full  = df_daily.iloc[split_idx:].copy()
+# -----------------------------------------------------------------------------
+# Normalize all candidate columns (z-score normalization)
+# Note: normalization is applied over non-missing values.
+# -----------------------------------------------------------------------------
+df_daily[impute_cols] = df_daily[impute_cols].apply(lambda col: (col - col.mean()) / col.std())
 
-print("Train shape:", df_train_full.shape, "Test shape:", df_test_full.shape)
-
-
-# --------------------------
-# 5. EVALUATION LOOP
-# --------------------------
+# Dictionary to store evaluation results
 evaluation_results = {}
 
-for target in expected_cols:
-    print(f"\n===== EVALUATING TARGET: {target} =====")
-    
-    # Subset to rows that have the target present
-    df_train = df_train_full.dropna(subset=[target]).copy()
-    df_test  = df_test_full.dropna(subset=[target]).copy()
-    if df_train.empty or df_test.empty:
-        print(f"Skipping {target} -> no train or test data.")
+# =============================================================================
+# 2. LOOP OVER EACH VARIABLE TO EVALUATE ITS IMPUTATION QUALITY
+# =============================================================================
+for target in impute_cols:
+    # Use only rows where target is observed (for ground truth evaluation)
+    df_target = df_daily[df_daily[target].notna()].copy()
+    if len(df_target) < 30:
+        print(f"Skipping {target} due to insufficient observed data.")
         continue
+
+    print(f"\n===== Evaluating Target: {target} =====")
     
-    print(f"  Train rows = {len(df_train)} | Test rows = {len(df_test)}")
+    # ------------------------------
+    # 2A. TRAIN/TEST SPLIT (time-based)
+    # ------------------------------
+    split_idx = int(0.8 * len(df_target))
+    df_train = df_target.iloc[:split_idx].copy()
+    df_test = df_target.iloc[split_idx:].copy()
+    print(f"  Train rows: {len(df_train)} | Test rows: {len(df_test)}")
     
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    # STEP 5A: SELECT PREDICTORS + ENFORCE NUMERIC
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    predictors = [col for col in expected_cols if col != target and col in df_train.columns]
+    # Save true values before simulating missingness
+    df_train[target + "_true"] = df_train[target]
+    df_test[target + "_true"] = df_test[target]
+    df_test[target] = np.nan  # simulate missingness in test set
     
-    # Convert these predictor columns to numeric, forcing invalid to NaN
-    df_train[predictors] = df_train[predictors].apply(pd.to_numeric, errors='coerce')
-    df_test[predictors]  = df_test[predictors].apply(pd.to_numeric, errors='coerce')
+    # ------------------------------
+    # 2B. IMPUTATION METHODS
+    # ------------------------------
+    # Concatenate train and test sets and sort by "id" and "date"
+    df_combo = pd.concat([df_train, df_test]).sort_values(["id", "date"])
     
-    # Fill in NaN with median from the train set
-    train_medians = df_train[predictors].median()
-    df_train[predictors] = df_train[predictors].fillna(train_medians)
-    df_test[predictors]  = df_test[predictors].fillna(train_medians)
+    # (i) Time Interpolation (uses date/time)
+    time_col = target + "_time"
+    df_combo[time_col] = temporal_impute(df_combo, target, method='time')
+    df_combo[time_col] = df_combo[time_col].fillna(df_train[target].mean())
+    df_test_temp = df_combo.loc[df_test.index]
+    true_vals = df_test_temp[target + "_true"]
+    pred_vals_time = df_test_temp[time_col]
+    mae_time = mean_absolute_error(true_vals, pred_vals_time)
+    rmse_time = np.sqrt(mean_squared_error(true_vals, pred_vals_time))
+    print(f"  Time Interpolation: MAE={mae_time:.4f}, RMSE={rmse_time:.4f}")
     
-    # Extra debug: ensure everything is numeric
-    # (Optional to show; comment out if too verbose)
-    # print("[DEBUG] df_train dtypes after to_numeric + fill:\n", df_train[predictors].dtypes)
-    # print("[DEBUG] df_test dtypes after to_numeric + fill:\n", df_test[predictors].dtypes)
+    # (ii) Forward/Backward Fill (does not use time)
+    ffill_col = target + "_ffill"
+    df_combo[ffill_col] = df_combo.groupby("id")[target].transform(lambda grp: grp.ffill().bfill())
+    df_combo[ffill_col] = df_combo[ffill_col].fillna(df_train[target].mean())
+    df_test_temp = df_combo.loc[df_test.index]
+    pred_vals_ffill = df_test_temp[ffill_col]
+    mae_ffill = mean_absolute_error(true_vals, pred_vals_ffill)
+    rmse_ffill = np.sqrt(mean_squared_error(true_vals, pred_vals_ffill))
+    print(f"  Forward/Backward Fill: MAE={mae_ffill:.4f}, RMSE={rmse_ffill:.4f}")
     
-    # Store the 'true' target
-    df_train[target + '_true'] = df_train[target]
-    df_test[target + '_true']  = df_test[target]
+    # (iii) Group Mean Imputation (does not use time)
+    mean_impute_col = target + "_group_mean"
+    df_combo[mean_impute_col] = df_combo.groupby("id")[target].transform(lambda grp: grp.fillna(grp.mean()))
+    df_combo[mean_impute_col] = df_combo[mean_impute_col].fillna(df_train[target].mean())
+    df_test_temp = df_combo.loc[df_test.index]
+    pred_vals_mean = df_test_temp[mean_impute_col]
+    mae_mean = mean_absolute_error(true_vals, pred_vals_mean)
+    rmse_mean = np.sqrt(mean_squared_error(true_vals, pred_vals_mean))
+    print(f"  Group Mean Imputation: MAE={mae_mean:.4f}, RMSE={rmse_mean:.4f}")
     
-    # Make test target = NaN so we can "impute"
-    df_test[target] = np.nan
+    # (iv) Group Median Imputation (does not use time)
+    median_impute_col = target + "_group_median"
+    df_combo[median_impute_col] = df_combo.groupby("id")[target].transform(lambda grp: grp.fillna(grp.median()))
+    df_combo[median_impute_col] = df_combo[median_impute_col].fillna(df_train[target].median())
+    df_test_temp = df_combo.loc[df_test.index]
+    pred_vals_median = df_test_temp[median_impute_col]
+    mae_median = mean_absolute_error(true_vals, pred_vals_median)
+    rmse_median = np.sqrt(mean_squared_error(true_vals, pred_vals_median))
+    print(f"  Group Median Imputation: MAE={mae_median:.4f}, RMSE={rmse_median:.4f}")
     
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    # STEP 5B: TIME INTERPOLATION
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    df_combo = pd.concat([df_train, df_test]).sort_values(['id', 'date'])
-    time_col = target + '_time'
-    df_combo[time_col] = df_combo[target]  # Copy current target
+    # ------------- Advanced Model-Based Methods -------------
+    # For these methods, we will use the remaining candidate columns (other than the target)
+    # as predictors to model the missing target.
+    features = [col for col in impute_cols if col != target]
     
-    for sid in df_combo['id'].unique():
-        sub_mask = (df_combo['id'] == sid)
-        sub_df = df_combo.loc[sub_mask].sort_values('date')
-        
-        if sub_df[target].notna().sum() < 2:
-            continue  # Cannot do time interpolation with <2 real points
-        
-        sub_df = sub_df.set_index('date')
-        sub_df[time_col] = sub_df[time_col].interpolate(method='time')
-        sub_df = sub_df.reset_index()
-        df_combo.loc[sub_df.index, time_col] = sub_df[time_col]
+    # Prepare training data: use rows from df_train; ensure predictors have no missing values
+    X_train = df_train[features].copy()
+    y_train = df_train[target]
+    X_test = df_test[features].copy()
     
-    # Evaluate on test portion
-    df_test_imputed = df_combo.loc[df_combo.index.intersection(df_test.index)]
-    true_vals = df_test_imputed[target + '_true']
-    pred_vals = df_test_imputed[time_col]
-    mask = (~true_vals.isna()) & (~pred_vals.isna())
-    if not mask.any():
-        mae_time = np.nan
-        rmse_time = np.nan
-        print(f"  Time interpolation => No valid test rows to compare.")
-    else:
-        mae_time = mean_absolute_error(true_vals[mask], pred_vals[mask])
-        rmse_time = np.sqrt(mean_squared_error(true_vals[mask], pred_vals[mask]))
+    # Fill potential missing values in predictors with the training set mean for each predictor.
+    X_train = X_train.fillna(X_train.mean())
+    X_test = X_test.fillna(X_train.mean())
     
-    print(f"  Time Interpolation: MAE={mae_time}, RMSE={rmse_time}")
+    # (v) KNN Regression Imputation
+    knn_model = KNeighborsRegressor(n_neighbors=5)
+    knn_model.fit(X_train, y_train)
+    pred_vals_knn = knn_model.predict(X_test)
+    mae_knn = mean_absolute_error(true_vals, pred_vals_knn)
+    rmse_knn = np.sqrt(mean_squared_error(true_vals, pred_vals_knn))
+    print(f"  KNN Regression Imputation: MAE={mae_knn:.4f}, RMSE={rmse_knn:.4f}")
     
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    # STEP 5C: SPLINE INTERPOLATION
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    spline_dict = {}
-    for order in spline_orders:
-        df_combo = pd.concat([df_train, df_test]).sort_values(['id', 'date'])
-        spline_col = f"{target}_spline_{order}"
-        df_combo[spline_col] = df_combo[target]
-        
-        for sid in df_combo['id'].unique():
-            sub_mask = (df_combo['id'] == sid)
-            sub_df = df_combo.loc[sub_mask].sort_values('date')
-            
-            n_pts = sub_df[target].notna().sum()
-            if n_pts < (order + 1):
-                # fallback => linear
-                sub_df = sub_df.set_index('date')
-                sub_df[spline_col] = sub_df[spline_col].interpolate(method='linear')
-                sub_df = sub_df.reset_index()
-            else:
-                sub_df = sub_df.set_index('date')
-                sub_df[spline_col] = sub_df[spline_col].interpolate(method='spline', order=order)
-                sub_df = sub_df.reset_index()
-            
-            df_combo.loc[sub_df.index, spline_col] = sub_df[spline_col]
-        
-        df_test_imputed = df_combo.loc[df_combo.index.intersection(df_test.index)]
-        true_vals = df_test_imputed[target + '_true']
-        pred_vals = df_test_imputed[spline_col]
-        
-        mask = (~true_vals.isna()) & (~pred_vals.isna())
-        if not mask.any():
-            mae_spl = np.nan
-            rmse_spl = np.nan
-        else:
-            mae_spl = mean_absolute_error(true_vals[mask], pred_vals[mask])
-            rmse_spl = np.sqrt(mean_squared_error(true_vals[mask], pred_vals[mask]))
-        spline_dict[f"order_{order}"] = {"MAE": mae_spl, "RMSE": rmse_spl}
-        print(f"  Spline(order={order}): MAE={mae_spl}, RMSE={rmse_spl}")
+    # (vi) Random Forest Regression Imputation
+    rf_model = RandomForestRegressor(n_estimators=100, random_state=42)
+    rf_model.fit(X_train, y_train)
+    pred_vals_rf = rf_model.predict(X_test)
+    mae_rf = mean_absolute_error(true_vals, pred_vals_rf)
+    rmse_rf = np.sqrt(mean_squared_error(true_vals, pred_vals_rf))
+    print(f"  Random Forest Regression Imputation: MAE={mae_rf:.4f}, RMSE={rmse_rf:.4f}")
     
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    # STEP 5D: LINEAR REGRESSION
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    X_train = df_train[predictors]
-    X_test  = df_test[predictors]
-    y_train = df_train[target + '_true']
-    y_test  = df_test[target + '_true']
-    
-    linreg = LinearRegression()
-    linreg.fit(X_train, y_train)
-    y_pred_lr = linreg.predict(X_test)
-    
-    mask = (~y_test.isna()) & (~pd.isna(y_pred_lr))
-    if not mask.any():
-        lr_mae = np.nan
-        lr_rmse = np.nan
-    else:
-        lr_mae = mean_absolute_error(y_test[mask], y_pred_lr[mask])
-        lr_rmse = np.sqrt(mean_squared_error(y_test[mask], y_pred_lr[mask]))
-    print(f"  LinearRegression: MAE={lr_mae}, RMSE={lr_rmse}")
-    
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    # STEP 5E: LASSO
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    lasso_dict = {}
-    for alpha in lasso_alphas:
-        lassomodel = Lasso(alpha=alpha, max_iter=10000, random_state=42)
-        lassomodel.fit(X_train, y_train)
-        y_pred_lasso = lassomodel.predict(X_test)
-        
-        mask = (~y_test.isna()) & (~pd.isna(y_pred_lasso))
-        if not mask.any():
-            lasso_mae = np.nan
-            lasso_rmse = np.nan
-        else:
-            lasso_mae = mean_absolute_error(y_test[mask], y_pred_lasso[mask])
-            lasso_rmse = np.sqrt(mean_squared_error(y_test[mask], y_pred_lasso[mask]))
-        lasso_dict[f"alpha_{alpha}"] = {"MAE": lasso_mae, "RMSE": lasso_rmse}
-        print(f"  Lasso(alpha={alpha}): MAE={lasso_mae}, RMSE={lasso_rmse}")
-    
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    # STEP 5F: KNN in PARALLEL
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    # We'll pass df_train, df_test, the predictor list, etc. 
-    knn_eval_list = Parallel(n_jobs=-1)(
-        delayed(evaluate_knn_for_k)(
-            k=k,
-            df_train=df_train,
-            df_test=df_test,
-            predictors=predictors,
-            target=target
-        )
-        for k in knn_k_values
-    )
-    knn_dict = {key: val for (key, val) in knn_eval_list}
-    for kkey, vals in knn_dict.items():
-        print(f"  KNN({kkey}): MAE={vals['MAE']}, RMSE={vals['RMSE']}")
-    
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    # STEP 5G: STORE RESULTS
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # ------------------------------
+    # 2C. STORE THE RESULTS FOR THIS TARGET
+    # ------------------------------
     evaluation_results[target] = {
         "time_interpolation": {"MAE": mae_time, "RMSE": rmse_time},
-        "spline": spline_dict,
-        "regression": {"MAE": lr_mae, "RMSE": lr_rmse},
-        "lasso": lasso_dict,
-        "knn": knn_dict
+        "ffill": {"MAE": mae_ffill, "RMSE": rmse_ffill},
+        "group_mean": {"MAE": mae_mean, "RMSE": rmse_mean},
+        "group_median": {"MAE": mae_median, "RMSE": rmse_median},
+        "knn_regression": {"MAE": mae_knn, "RMSE": rmse_knn},
+        "random_forest": {"MAE": mae_rf, "RMSE": rmse_rf}
     }
 
+# =============================================================================
+# 3. PRINT AGGREGATED RESULTS
+# =============================================================================
+print("\n====== AGGREGATED RESULTS ======")
+for targ, res in evaluation_results.items():
+    print(f"\nTarget: {targ}")
+    #print(f"  Time Interpolation: MAE={res['time_interpolation']['MAE']:.4f}, RMSE={res['time_interpolation']['RMSE']:.4f}")
+    print(f"  Forward/Backward Fill: MAE={res['ffill']['MAE']:.4f}, RMSE={res['ffill']['RMSE']:.4f}")
+    print(f"  Group Mean Imputation: MAE={res['group_mean']['MAE']:.4f}, RMSE={res['group_mean']['RMSE']:.4f}")
+    print(f"  Group Median Imputation: MAE={res['group_median']['MAE']:.4f}, RMSE={res['group_median']['RMSE']:.4f}")
+    print(f"  KNN Regression Imputation: MAE={res['knn_regression']['MAE']:.4f}, RMSE={res['knn_regression']['RMSE']:.4f}")
+    print(f"  Random Forest Regression Imputation: MAE={res['random_forest']['MAE']:.4f}, RMSE={res['random_forest']['RMSE']:.4f}")
 
-# --------------------------
-# 6. PRINT FINAL RESULTS
-# --------------------------
-print("\n========= AGGREGATED RESULTS =========")
-for var, methods in evaluation_results.items():
-    print(f"\nTARGET: {var}")
-    for method_name, metrics in methods.items():
-        if isinstance(metrics, dict) and "MAE" in metrics:
-            # Single dict with {MAE, RMSE}
-            print(f"  {method_name}: MAE={metrics['MAE']}, RMSE={metrics['RMSE']}")
-        else:
-            # Potentially nested dict (e.g., spline orders, lasso alphas, KNN k)
-            print(f"  {method_name}:")
-            for sub_key, sub_val in metrics.items():
-                print(f"    {sub_key}: MAE={sub_val['MAE']}, RMSE={sub_val['RMSE']}")
+# =============================================================================
+# 4. RETURN BEST METHOD PER VARIABLE (based on lowest MAE)
+# =============================================================================
+best_methods = {}
+
+for target, results in evaluation_results.items():
+    best_method = min(results.items(), key=lambda x: x[1]['RMSE'])[0]
+    best_rmse = results[best_method]['RMSE']
+    best_methods[target] = {
+        "best_method": best_method,
+        "RMSE": best_rmse,
+        "MAE": results[best_method]['MAE']
+    }
+
+# Print a summary
+print("\n====== BEST METHOD PER VARIABLE (based on RMSE) ======")
+for var, info in best_methods.items():
+    print(f"{var}: {info['best_method']} (MAE={info['MAE']:.4f}, RMSE={info['RMSE']:.4f})")
