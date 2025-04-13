@@ -158,7 +158,8 @@ plt.rcParams.update({
 })
 
 for category in app_categories:
-    cat_data = data[data["variable"] == category].copy()
+    # Filter op juiste categorie én geen negatieve waarden
+    cat_data = data[(data["variable"] == category) & (data["value"] >= 0)].copy()
 
     plt.figure(figsize=(10, 4))
     ax = sns.scatterplot(
@@ -166,12 +167,15 @@ for category in app_categories:
         alpha=0.5, color="#3182bd", s=12
     )
 
+    # IQR-berekening voor outlier threshold
     q1 = cat_data["value"].quantile(0.25)
     q3 = cat_data["value"].quantile(0.75)
     iqr = q3 - q1
     threshold = q3 + 1.5 * iqr
 
+    # Threshold-lijn tekenen
     plt.axhline(threshold, color="red", linestyle="--", linewidth=1.5, label=f"Threshold ≈ {threshold:.0f}")
+
     plt.title(f"App Usage: {category}", fontweight='bold')
     plt.xlabel("Time")
     plt.ylabel("Usage (seconds)")
@@ -179,3 +183,44 @@ for category in app_categories:
     plt.grid(True, linestyle='--', alpha=0.5)
     plt.tight_layout()
     plt.show()
+
+plt.style.use('seaborn-v0_8-whitegrid')
+plt.rcParams.update({
+    'font.size': 10,
+    'axes.labelsize': 12,
+    'axes.titlesize': 13,
+    'xtick.labelsize': 10,
+    'ytick.labelsize': 10
+})
+
+for category in app_categories:
+    # Filter: alleen waarden tussen 0 en 200
+    cat_data = data[
+        (data["variable"] == category) &
+        (data["value"] >= 0) &
+        (data["value"] <= 200)
+    ].copy()
+
+    # Bereken threshold op basis van IQR
+    q1 = cat_data["value"].quantile(0.25)
+    q3 = cat_data["value"].quantile(0.75)
+    iqr = q3 - q1
+    threshold = q3 + 1.5 * iqr
+
+    # Plot histogram
+    plt.figure(figsize=(10, 4))
+    sns.histplot(cat_data["value"], bins=40, color="#6baed6", edgecolor='black', alpha=0.8)
+
+    # Verticale lijn bij threshold
+    plt.axvline(threshold, color="red", linestyle="--", linewidth=1.5, label=f"Threshold ≈ {threshold:.0f}")
+
+    plt.title(f"App Usage Distribution: {category}", fontweight='bold')
+    plt.xlabel("Usage (seconds)")
+    plt.ylabel("Frequency")
+    plt.legend(loc="upper right", fontsize=9)
+    plt.grid(axis="y", linestyle='--', alpha=0.5)
+    plt.tight_layout()
+    plt.show()
+
+
+    
