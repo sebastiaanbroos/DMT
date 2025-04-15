@@ -140,32 +140,6 @@ print("\nGridSearchCV Best Params for RandomForest:")
 print(grid.best_params_)
 print("Best R2 Score on CV:", grid.best_score_)
 
-# ----------------------------
-# 7. PCA Analysis
-# ----------------------------
-
-# Perform PCA on the standardized features.
-pca = PCA(n_components=0.95, random_state=42)  # retain enough components to explain 95% variance
-X_pca = pca.fit_transform(X_scaled)
-
-# Explained variance ratio per component.
-explained_variance = pca.explained_variance_ratio_
-cumulative_variance = np.cumsum(explained_variance)
-print("\nExplained Variance Ratio of PCA Components:")
-for i, (ev, cv) in enumerate(zip(explained_variance, cumulative_variance), start=1):
-    print(f"PC{i}: {ev:.4f}, Cumulative: {cv:.4f}")
-
-# Plot the explained variance (scree plot)
-plt.figure(figsize=(8, 5))
-plt.plot(range(1, len(explained_variance)+1), explained_variance, 'o-', label='Individual Explained Variance')
-plt.plot(range(1, len(cumulative_variance)+1), cumulative_variance, 's--', label='Cumulative Explained Variance')
-plt.title("PCA Explained Variance Ratio")
-plt.xlabel("Principal Component")
-plt.ylabel("Explained Variance Ratio")
-plt.xticks(range(1, len(explained_variance)+1))
-plt.legend()
-plt.tight_layout()
-plt.show()
 
 # ----------------------------
 # 8. Combine Feature Ranks Over All Models and Save to CSV
