@@ -1,54 +1,33 @@
-""""This is the part where we do Feature Engineering for Task 1C
-I will need to create a predictive model for the data set I 
-created during this part
-
-- I will have to predict average mood (mood_avg) of teh day for each user
-- I need to make use of average mood history during the last (3-5 days --> I need to decide)
-"""
-
 import pandas as pd
 
+# Load the data with date parsing
 df = pd.read_csv('data/daily_removed_incomplete_moods_imputated.csv', parse_dates=['date'])
 
-
-def feature_engineering(df, target = "mood_avg", history = 3):
+def feature_engineering(df, target="mood_avg", history=3):
     """
-    I am creating feature set usding history of past user data to predict the target variable
+    Create features using a history of past user data.
+    Instead of replacing the average daily mood column, the function adds a 
+    new column with the average mood over the past `history` days.
     """
-    # I need to sort the dataframe by user and date
+    # Sort the DataFrame by user id and date
     df = df.sort_values(by=['id', 'date']).reset_index(drop=True)
     
-    # My features for prediction
-    predictors = [col for col in df.columns if col not in ['id', 'date', 'mood_avg']]
+    # For each user, compute the rolling average of the target over the past history days.
+    # The .shift(1) ensures that the rolling average only uses past days and not the current day.
+    df[f"{target}_hist"] = df.groupby("id")[target].transform(
+        lambda x: x.rolling(window=history, min_periods=history).mean().shift(1)
+    )
     
-    all_features = []
+    # Remove rows that do not have sufficient history (rolling average will be NaN)
+    df = df.dropna(subset=[f"{target}_hist"]).reset_index(drop=True)
     
-    for user_id, user_df in df.groupby('id'):
-        user_df = user_df.sort_values("date").copy()
-        
-        # Finding a mean of the past history
-        rolling_feats = (
-            user_df[predictors]
-            .rolling(window=history, min_periods=history)
-            .mean()
-            .shift(1)
-        )
-        
-        rolling_feats["id"] = user_df["id"]
-        rolling_feats["date"] = user_df["date"]
-        rolling_feats[f"{target}_target"] = user_df[target]
-        
-        all_features.append(rolling_feats)
-        
-    # Removing missing rows --> check this part
-    data_features = pd.concat(all_features).dropna().reset_index(drop=True)
-    return data_features
-        
+    return df
 
+# Apply feature engineering to add the 3-day historical average of mood_avg
+data_fe = feature_engineering(df, target="mood_avg", history=3)
 
-data_fe = feature_engineering(df, target = "mood_avg", history = 3)
-
-# Saving to csv
-data_fe.to_csv("data/data_after_fe.csv", index=False)
-print("Feature-engineered data saved to 'data_after_fe.csv'")
-print("Shape of teh dataset after fe: ", data_fe.shape)
+# Save the resulting DataFrame to CSV
+output_csv = "data/data_after_fe.csv"
+data_fe.to_csv(output_csv, index=False)
+print("Feature-engineered data saved to", output_csv)
+print("Shape of the dataset after feature engineering:", data_fe.shape)

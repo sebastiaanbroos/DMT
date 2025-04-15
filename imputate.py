@@ -121,25 +121,25 @@ best_method_mapping = {
     "circumplex.arousal_avg": "group_mean",
     "circumplex.valence_avg": "random_forest",
     "mood_avg": "random_forest",
-    "circumplex.arousal_std": "nn",              # NN wins (RMSE: 0.9572 vs 0.9749)
+    "circumplex.arousal_std": "nn",              # NN wins (0.9596 vs 0.9769)
     "circumplex.valence_std": "random_forest",
     "mood_std": "random_forest",
     "activity": "group_median",
-    "appCat.builtin": "nn",                      # NN wins (RMSE: 0.6103 vs 1.8738)
+    "appCat.builtin": "random_forest",
     "appCat.communication": "random_forest",
-    "appCat.entertainment": "group_median",
-    "appCat.finance": "nn",                      # NN wins (RMSE: 0.7647 vs 1.7844)
-    "appCat.game": "nn",                         # NN wins (RMSE: 0.5456 vs 0.5846)
+    "appCat.entertainment": "group_mean",
+    "appCat.finance": "nn",                      # NN wins (0.9297 vs 1.3637)
+    "appCat.game": "group_mean",
     "appCat.office": "group_mean",
     "appCat.other": "group_median",
-    "appCat.social": "random_forest",
-    "appCat.travel": "group_mean",
-    "appCat.unknown": "nn",                      # NN wins (RMSE: 0.8138 vs 0.8324)
+    "appCat.social": "group_mean",
+    "appCat.travel": "group_median",
+    "appCat.unknown": "group_mean",
     "appCat.utilities": "group_mean",
-    "appCat.weather": "nn",                      # NN wins (RMSE: 0.7279 vs 1.3126)
-    "call": "nn",                                # NN wins (RMSE: 0.9093 vs 1.0105)
+    "appCat.weather": "group_mean",
+    "call": "nn",                                # NN wins (0.9392 vs 1.0298)
     "screen": "random_forest",
-    "sms": "nn"                                  # NN wins (RMSE: 0.8030 vs 1.0271)
+    "sms": "nn"                                  # NN wins (0.9461 vs 0.9935)
 }
 
 # -----------------------------------------------------------------------------
@@ -235,7 +235,7 @@ for col in impute_cols:
     df[col] = df_data[col]
 
 # Save the fully imputed DataFrame and the imputation record.
-output_csv = "//data/daily_removed_incomplete_moods_imputated.csv"
+output_csv = "daily_removed_incomplete_moods_imputated.csv"
 df.to_csv(output_csv, index=False)
 record_csv = "imputation_record.csv"
 imputation_record.to_csv(record_csv, index=False)

@@ -108,6 +108,21 @@ dropped_rows = before_drop - after_drop
 print(f"Number of rows dropped due to missing 'mood_avg': {dropped_rows}")
 
 # --------------------------
+# Apply Log Transform to Skewed Variables
+# --------------------------
+log_transform_cols = [
+    "screen", "call", "sms",
+    "appCat.builtin", "appCat.communication", "appCat.entertainment", "appCat.finance",
+    "appCat.game", "appCat.office", "appCat.other", "appCat.social", "appCat.travel",
+    "appCat.unknown", "appCat.utilities", "appCat.weather"
+]
+
+for col in log_transform_cols:
+    if col in df_daily.columns:
+        df_daily[col] = np.log1p(df_daily[col])
+
+
+# --------------------------
 # Save the Daily Aggregated Data to CSV
 # --------------------------
 output_csv = "/Users/s.broos/Documents/DMT/data/daily_removed_incomplete_moods_non-imputated.csv"
