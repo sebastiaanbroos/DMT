@@ -37,7 +37,9 @@ ax = sns.histplot(mood_data, bins=bins, kde=False, color='#6BAED6')
 
 # Calculate statistics
 mean_val = mood_data.mean()
+median_val = mood_data.median()
 std_val = mood_data.std()
+print(f"Mean: {mean_val:.2f}, Median: {median_val:.2f}, Standard Deviation: {std_val:.2f}")
 
 # Create a normal distribution overlay using NumPy
 x = np.linspace(1, 10, 1000)

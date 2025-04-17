@@ -46,11 +46,13 @@ pivot_df = (
     .unstack()
 )
 
+
 plt.figure(figsize=(12, 8))
 sns.heatmap(pivot_df.corr(), annot=True, fmt=".2f", cmap="coolwarm")
 plt.title("Correlation Between Daily-Aggregated Variables")
 plt.tight_layout()
 plt.show()
+
 
 # number of records per variable
 variable_counts = data['variable'].value_counts()
@@ -59,6 +61,63 @@ print("\nRecords per variable: ", variable_counts)
 # records per user
 user_counts = data['id'].value_counts()
 print("\nRecords per user: ", user_counts)
+
+def user_with_most_entries(df):
+    """
+    Finds user and date with the most total entries in the dataset
+    """
+    
+    df['time'] = pd.to_datetime(df['time'])
+    df['date'] = df['time'].dt.date
+
+    # group by user and date, count entries
+    entry_counts = (
+        df.groupby(['id', 'date'])
+        .size()
+        .reset_index(name='entry_count')
+    )
+
+    max_entry = entry_counts.loc[entry_counts['entry_count'].idxmax()]
+    
+    return max_entry
+
+top_user = user_with_most_entries(data)
+print("User with most entries on a single day:", top_user)
+
+# date range
+print("Date range:", data['time'].min(), "to", data['time'].max())
+
+# creating a dataframe that contains the number of mood entries per user per day
+def count_daily_mood_entries(df, output_path='daily_mood_counts.csv'):
+    # Filter only mood entries
+    mood_data = df[df['variable'] == 'mood'].copy()
+    
+    # Ensure datetime and extract date
+    mood_data['time'] = pd.to_datetime(mood_data['time'])
+    mood_data['date'] = mood_data['time'].dt.date
+
+    # Count number of mood entries per user per day
+    mood_counts = (
+        mood_data.groupby(['id', 'date'])
+        .size()
+        .reset_index(name='mood_entry_count')
+    )
+    
+    mood_counts.to_csv(output_path, index=False)
+    
+    print(f"Saved daily mood counts to '{output_path}'")
+    return mood_counts
+
+mood_daily_counts = count_daily_mood_entries(data, 'data/daily_mood_counts.csv')
+print(mood_daily_counts.head())
+
+overall_mood_mean = mood_daily_counts['mood_entry_count'].mean()
+print(f"Average number of mood entries per user per day: {overall_mood_mean:.2f}")
+
+# most active hour of the day for mood logging
+data['hour'] = pd.to_datetime(data['time']).dt.hour
+mood_hours = data[data['variable'] == 'mood']['hour'].value_counts().sort_index()
+mood_hours.plot(kind='bar', title='Mood Entries by Hour of Day')
 
 # plotting number of entries per variable
 plt.figure(figsize=(10, 4))
@@ -83,8 +142,11 @@ for var in ['mood', 'screen', 'activity', 'circumplex.valence']:
 
 # plotting variables per user --> this is new, it doesnt work i have to debug it
 for var in ['mood', 'screen', 'activity', 'circumplex.valence']:
+    
+    var_data = data[data['variable'] == var].copy()
+    
     daily_avg = (
-    var.groupby(["id", "date"])["value"]
+    var_data.groupby(["id", "date"])["value"]
     .mean()
     .reset_index()
     )
@@ -98,14 +160,5 @@ for var in ['mood', 'screen', 'activity', 'circumplex.valence']:
     plt.grid(True)
     plt.tight_layout()
     plt.show()
-"""
-# plotting distribution of "mood" value
-plt.figure(figsize=(8, 4))
-sns.histplot(data[data['variable'] == 'mood']['value'], bins=20, kde=True)
-plt.title("Distribution of Mood Scores")
-plt.xlabel("Mood (1-10)")
-plt.ylabel("Frequency")
-plt.show()
-# --> data is skewed to the right
-"""
+
 
