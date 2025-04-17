@@ -155,6 +155,8 @@ impute_cols = [col for col in df.columns if col not in ["date", "id"]]
 # Save original missing mask for each candidate variable.
 missing_mask = {col: df[col].isna() for col in impute_cols}
 
+
+
 # Create a working copy for preprocessing.
 df_data = df[impute_cols].copy()
 for col in impute_cols:

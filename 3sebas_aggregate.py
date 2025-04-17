@@ -107,6 +107,20 @@ after_drop = df_daily.shape[0]
 dropped_rows = before_drop - after_drop
 print(f"Number of rows dropped due to missing 'mood_avg': {dropped_rows}")
 
+
+# Only consider numeric feature columns (exclude 'id' and 'date')
+numeric_cols = [c for c in df_daily.columns if c not in ["id", "date"]]
+
+# Compute means and standard deviations
+col_means = df_daily[numeric_cols].mean()
+col_stds  = df_daily[numeric_cols].std()
+
+# Save them for later inverse‑transform
+col_means.to_csv("/Users/s.broos/Documents/DMT/data/column_means.csv", header=["mean"])
+col_stds.to_csv( "/Users/s.broos/Documents/DMT/data/column_stds.csv",  header=["std"])
+
+print("Saved column means and stds.")
+
 # --------------------------
 # Apply Log Transform to Skewed Variables
 # --------------------------

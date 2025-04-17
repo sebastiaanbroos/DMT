@@ -5,16 +5,15 @@ import matplotlib.pyplot as plt
 from xgboost import XGBRegressor
 from sklearn.model_selection import train_test_split, KFold, cross_validate
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from math import sqrt
 
 # === PARAMETERS ===
-DATA_PATH       = "/Users/s.broos/Documents/DMT/data/data_after_fe.csv"
-TARGET          = "mood_avg"
-TEST_SIZE       = 0.10
-CV_FOLDS        = 5
-RANDOM_STATE    = 42
+DATA_PATH    = "/Users/s.broos/Documents/DMT/data/data_after_fe.csv"
+TARGET       = "mood_avg"
+TEST_SIZE    = 0.10
+CV_FOLDS     = 5
+RANDOM_STATE = 42
 
-# XGB defaults (you can tune these later)
+# XGB defaults (can be tuned later)
 xgb_kwargs = dict(
     random_state=RANDOM_STATE,
     max_depth=3,
@@ -23,75 +22,73 @@ xgb_kwargs = dict(
     objective='reg:squarederror'
 )
 
-# === 1) LOAD & HOLD OUT TEST SET ===
+# === 1) LOAD & HOLD‑OUT TEST SET ===
 df = pd.read_csv(DATA_PATH)
 df['date'] = pd.to_datetime(df['date'])
 df.sort_values(['id','date'], inplace=True)
 
-X = df.drop(columns=['id','date', TARGET]).copy()
+# features / target
+X = df.drop(columns=['id','date', TARGET])
 y = df[TARGET].values
 
+# chronological 90/10 split
 X_trainval, X_test, y_trainval, y_test = train_test_split(
     X, y,
     test_size=TEST_SIZE,
+    shuffle=False,
     random_state=RANDOM_STATE
 )
 
-# === 2) GET FEATURE IMPORTANCE ORDERING ===
+# === 2) INITIAL XGB TO RANK FEATURES ===
 base = XGBRegressor(**xgb_kwargs)
 base.fit(X_trainval, y_trainval)
 
-imp = pd.Series(base.feature_importances_, index=X.columns)
-ordered_features = imp.sort_values(ascending=False).index.tolist()
+feat_imp = pd.Series(base.feature_importances_, index=X_trainval.columns)
+ordered_features = feat_imp.sort_values(ascending=False).index.tolist()
 
-# === 3) SWEEP k AND COLLECT CV MAE ===
+# === 3) SWEEP k & COLLECT CV MSE ===
 kf = KFold(n_splits=CV_FOLDS, shuffle=True, random_state=RANDOM_STATE)
 
-ks = []
-train_maes = []
-val_maes = []
+ks, train_mses, val_mses = [], [], []
+best_k, best_val_mse = 0, np.inf
 
-best_k = None
-best_val_mae = np.inf
-
-for k in range(1, len(ordered_features)+1):
-    feats = ordered_features[:k]
-    X_sub = X_trainval[feats].values
+for k in range(1, len(ordered_features) + 1):
+    sel = ordered_features[:k]
+    X_sub = X_trainval[sel]
     
     cv_res = cross_validate(
         XGBRegressor(**xgb_kwargs),
         X_sub, y_trainval,
         cv=kf,
-        scoring='neg_mean_absolute_error',
+        scoring='neg_mean_squared_error',    # use MSE
         return_train_score=True,
         n_jobs=-1
     )
-    mean_train_mae = -cv_res['train_score'].mean()
-    mean_val_mae   = -cv_res['test_score'].mean()
+    train_mse = -cv_res['train_score'].mean()
+    val_mse   = -cv_res['test_score'].mean()
     
     ks.append(k)
-    train_maes.append(mean_train_mae)
-    val_maes.append(mean_val_mae)
+    train_mses.append(train_mse)
+    val_mses.append(val_mse)
     
-    if mean_val_mae < best_val_mae:
-        best_val_mae = mean_val_mae
-        best_k = k
+    if val_mse < best_val_mse:
+        best_val_mse, best_k = val_mse, k
     
-    print(f"k={k:2d} → train MAE={mean_train_mae:.4f}, val MAE={mean_val_mae:.4f}")
+    print(f"k={k:2d} → train MSE={train_mse:.4f}, val MSE={val_mse:.4f}")
 
-print(f"\nBest k by validation MAE: {best_k} (MAE={best_val_mae:.4f})")
+print(f"\nBest k by val MSE: {best_k} (MSE={best_val_mse:.4f})")
 
-# === 4) PLOT & SAVE ===
+# === 4) PLOT TRAIN vs VALIDATION MSE BY # FEATURES ===
 plt.figure(figsize=(8,5))
-plt.plot(ks, train_maes, marker='o', label='Train MAE')
-plt.plot(ks, val_maes,   marker='o', label='Val MAE')
+plt.plot(ks, train_mses, marker='o', label='Train MSE')
+plt.plot(ks, val_mses,   marker='o', label='Val   MSE')
 plt.xlabel("Number of Features (k)")
-plt.ylabel("Mean Absolute Error")
-plt.title("Train vs. Validation MAE by # of Features")
+plt.ylabel("Mean Squared Error")
+plt.title("Train vs. Validation MSE by # of Features")
 plt.legend()
 plt.grid(True)
 plt.tight_layout()
-plt.savefig("train_val_mae_vs_k.png", dpi=150)
+plt.savefig("train_val_mse_vs_k.png", dpi=150)
 plt.show()
 
 # === 5) FINAL TRAIN & TEST EVALUATION ===
@@ -100,9 +97,9 @@ final_model = XGBRegressor(**xgb_kwargs)
 final_model.fit(X_trainval[best_feats], y_trainval)
 
 y_pred = final_model.predict(X_test[best_feats])
-mse   = mean_squared_error(y_test, y_pred)
 mae   = mean_absolute_error(y_test, y_pred)
-rmse  = sqrt(mse)
+mse   = mean_squared_error(y_test, y_pred)
+rmse  = np.sqrt(mse)
 r2    = r2_score(y_test, y_pred)
 
 print("\nHeld‑out Test Set Performance:")

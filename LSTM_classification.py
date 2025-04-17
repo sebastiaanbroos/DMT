@@ -1,87 +1,138 @@
 import numpy as np
 import pandas as pd
-from sklearn.metrics import f1_score, precision_score, recall_score, accuracy_score
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Dropout
+import matplotlib.pyplot as plt
+
+from tensorflow.keras.layers import (
+    Input, Embedding, Reshape,
+    Bidirectional, LSTM, Dense, Dropout, concatenate
+)
+from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
+
+from sklearn.utils.class_weight import compute_class_weight
+from sklearn.metrics import classification_report
+from sklearn.model_selection import train_test_split
 
 # === PARAMETERS ===
-learning_rate   = 0.0003
-sequence_length = 3     # number of past samples to look at
+learning_rate   = 3e-4
+sequence_length = 3     # past days
 batch_size      = 16
 epochs          = 50
+embedding_dim   = 8
+lstm_units1     = 32
+lstm_units2     = 16
+dense_units     = 32
+dropout_rate    = 0.3
 
-# === 1. LOAD & PREPARE DATA ===
-df = pd.read_csv('/Users/s.broos/Documents/DMT/data/daily_removed_incomplete_moods_imputated.csv')
-df['date'] = pd.to_datetime(df['date'])
-df.sort_values(['id','date'], inplace=True)
+# === 1) LOAD & PREPARE DATA ===
+df = pd.read_csv("/Users/s.broos/Documents/DMT/data/daily_removed_incomplete_moods_imputated.csv")
+df["date"] = pd.to_datetime(df["date"])
+df.sort_values(["id","date"], inplace=True)
 
-# Create binary label if missing
-if 'mood_label' not in df.columns:
-    df['mood_label'] = (df['mood_avg'] >= 0).astype(int)
+# Map subjects to indices for embedding
+df["subj_idx"] = pd.factorize(df["id"])[0]
+num_subjects = df["subj_idx"].nunique()
 
-# Identify features (no scaling)
-ignore = ['id','date','mood_avg','mood_label']
-feature_cols = [c for c in df.columns if c not in ignore]
+# 3 mood classes on normalized scale
+df["label"] = pd.cut(
+    df["mood_avg"],
+    bins=[-np.inf, -0.5, 0.5, np.inf],
+    labels=[0, 1, 2]
+).astype(int)
 
-# === 2. BUILD PER‑SUBJECT SEQUENCES ===
-X_seq, y_seq = [], []
-for subj, grp in df.groupby('id'):
-    grp = grp.sort_values('date')
-    X_subj = grp[feature_cols].values
-    y_subj = grp['mood_label'].values
-    
+# Feature columns (exclude id, date, mood_avg, label, subj_idx)
+ignore = ["id","date","mood_avg","label"]
+feature_cols = [c for c in df.columns if c not in ignore + ["subj_idx"]]
+
+# Build sequences
+X_seq, S_seq, y_seq = [], [], []
+for sid, grp in df.groupby("subj_idx"):
+    grp = grp.sort_values("date")
+    Xg = grp[feature_cols].values
+    yg = grp["label"].values
     for i in range(sequence_length, len(grp)):
-        X_seq.append(X_subj[i-sequence_length:i, :])
-        y_seq.append(y_subj[i])
+        X_seq.append(Xg[i-sequence_length:i])
+        S_seq.append(sid)
+        y_seq.append(yg[i])
 
-X_seq = np.array(X_seq)    # (n_windows, seq_len, n_features)
-y_seq = np.array(y_seq)    # (n_windows,)
+X_seq = np.array(X_seq)
+S_seq = np.array(S_seq)
+y_seq = np.array(y_seq)
 
-# === 3. SPLIT INTO TRAIN & TEST ===
-split = int(0.9 * len(X_seq))
-X_train, X_test = X_seq[:split], X_seq[split:]
-y_train, y_test = y_seq[:split], y_seq[split:]
+# Train/test split (90/10), stratified on y
+X_train, X_test, S_train, S_test, y_train, y_test = train_test_split(
+    X_seq, S_seq, y_seq,
+    test_size=0.1,
+    stratify=y_seq,
+    random_state=42
+)
 
-# === 4. BUILD THE LSTM CLASSIFIER ===
-model = Sequential([
-    LSTM(16, activation='tanh', input_shape=(sequence_length, X_seq.shape[2])),
-    Dropout(0.2),
-    Dense(16, activation='tanh'),
-    Dropout(0.2),
-    Dense(1, activation='sigmoid')
-])
+# Compute class weights
+classes = np.unique(y_train)
+weights = compute_class_weight("balanced", classes=classes, y=y_train)
+class_weight = dict(zip(classes, weights))
 
+# === 2) BUILD THE MODEL ===
+# Sequence input
+seq_in  = Input(shape=(sequence_length, X_seq.shape[2]), name="seq_input")
+# Subject ID input
+subj_in = Input(shape=(1,), name="subj_input")
+# Embedding
+emb = Embedding(input_dim=num_subjects, output_dim=embedding_dim, name="subj_embed")(subj_in)
+emb = Reshape((embedding_dim,))(emb)
+
+# Stacked bidirectional LSTM
+x = Bidirectional(LSTM(lstm_units1, return_sequences=True), name="bilstm_1")(seq_in)
+x = Bidirectional(LSTM(lstm_units2),            name="bilstm_2")(x)
+x = Dropout(dropout_rate, name="dropout_lstm")(x)
+
+# Combine with subject embedding
+x = concatenate([x, emb], name="concat")
+
+# Dense layers
+x = Dense(dense_units, activation="relu", name="dense_1")(x)
+x = Dropout(dropout_rate, name="dropout_dense")(x)
+out = Dense(3, activation="softmax", name="out")(x)
+
+model = Model(inputs=[seq_in, subj_in], outputs=out, name="SubjectAware_BiLSTM")
 model.compile(
     optimizer=Adam(learning_rate=learning_rate),
-    loss='binary_crossentropy',
-    metrics=['accuracy']
+    loss="sparse_categorical_crossentropy"
 )
 model.summary()
 
-# === 5. EARLY STOPPING ===
-early_stop = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
+# Callbacks
+early_stop = EarlyStopping(monitor="val_loss", patience=5, restore_best_weights=True)
+reduce_lr  = ReduceLROnPlateau(monitor="val_loss", factor=0.5, patience=3, verbose=1)
 
-# === 6. TRAIN ===
+# === 3) TRAIN ===
 history = model.fit(
-    X_train, y_train,
+    {"seq_input": X_train, "subj_input": S_train},
+    y_train,
     validation_split=0.2,
     epochs=epochs,
     batch_size=batch_size,
-    callbacks=[early_stop],
+    class_weight=class_weight,
+    callbacks=[early_stop, reduce_lr],
     verbose=1
 )
 
-# === 7. EVALUATE & METRICS ===
-loss, acc = model.evaluate(X_test, y_test, verbose=0)
-print(f"Test Loss: {loss:.4f}, Test Accuracy: {acc:.4f}")
+# === 4) EVALUATE ===
+y_prob = model.predict({"seq_input": X_test, "subj_input": S_test})
+y_pred = np.argmax(y_prob, axis=1)
 
-# Predictions & additional metrics
-y_prob = model.predict(X_test).flatten()
-y_pred = (y_prob >= 0.5).astype(int)
+print("\nTest set classification report:")
+print(classification_report(y_test, y_pred, digits=4))
 
-print("F1 Score:   ", f1_score(y_test, y_pred))
-print("Precision:  ", precision_score(y_test, y_pred))
-print("Recall:     ", recall_score(y_test, y_pred))
-print("Accuracy:   ", accuracy_score(y_test, y_pred))
+# === 5) PLOT LOSS ===
+plt.figure(figsize=(6,4))
+plt.plot(history.history["loss"], label="Train Loss")
+plt.plot(history.history["val_loss"], label="Val Loss")
+plt.xlabel("Epoch")
+plt.ylabel("Loss")
+plt.title("Training vs Validation Loss")
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()
