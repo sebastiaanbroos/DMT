@@ -1,4 +1,4 @@
-,RandomForest,Lasso,XGBoost,ExtraTrees,Average_Rank
+feature,RandomForest,Lasso,XGBoost,ExtraTrees,rank
 circumplex.valence_avg,1.0,1.0,1.0,1.0,1.0
 mood_avg_hist,2.0,2.0,2.0,2.0,2.0
 mood_std,3.0,3.0,7.0,3.0,4.0
