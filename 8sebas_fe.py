@@ -31,9 +31,8 @@ y = df_features["mood_avg"]
 # Save feature names BEFORE scaling (to use later for feature importance)
 feature_names = X.columns
 
-# Standardize the features.
-scaler = StandardScaler()
-X_scaled = scaler.fit_transform(X)
+
+X_scaled = X
 
 # ----------------------------
 # 3. Train-Test Split

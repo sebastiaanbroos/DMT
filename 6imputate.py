@@ -236,6 +236,10 @@ imputation_record = imputation_record[cols]
 for col in impute_cols:
     df[col] = df_data[col]
 
+# Add a new column to indicate if the date is a Friday or Saturday.
+df['is_friday_or_saturday'] = ((df['date'].dt.dayofweek == 4) |
+                               (df['date'].dt.dayofweek == 5)).astype(int)
+
 # Save the fully imputed DataFrame and the imputation record.
 output_csv = "daily_removed_incomplete_moods_imputated.csv"
 df.to_csv(output_csv, index=False)
